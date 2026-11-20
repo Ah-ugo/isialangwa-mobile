@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#1a3a6b"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.isialangwa.directory"
@@ -34,8 +36,6 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router",
-      "expo-sqlite",
       "expo-secure-store",
       [
         "expo-image-picker",
