@@ -1,8 +1,34 @@
 import axios from 'axios';
 import { getToken, removeToken } from '../utils/storage';
-import { EventEmitter } from 'events';
 
-export const authEvents = new EventEmitter();
+class SimpleEventEmitter {
+  constructor() {
+    this.listeners = {};
+  }
+
+  on(event, callback) {
+    if (!this.listeners[event]) this.listeners[event] = [];
+    this.listeners[event].push(callback);
+  }
+
+  off(event, callback) {
+    if (!this.listeners[event]) return;
+    this.listeners[event] = this.listeners[event].filter((cb) => cb !== callback);
+  }
+
+  emit(event, ...args) {
+    if (!this.listeners[event]) return;
+    this.listeners[event].forEach((cb) => {
+      try {
+        cb(...args);
+      } catch (err) {
+        console.error('EventEmitter error:', err);
+      }
+    });
+  }
+}
+
+export const authEvents = new SimpleEventEmitter();
 
 const client = axios.create({
   baseURL: 'https://apcbe.vercel.app/api/mobile',
