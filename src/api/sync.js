@@ -11,12 +11,12 @@ export async function syncAll(since, wardId) {
   if (wardId) params.wardId = wardId;
 
   const response = await client.get('/sync', { params });
-  const { data } = response.data;
+  const payload = response.data?.data || response.data || {};
   return {
-    wards: data.wards || [],
-    pollingUnits: data.pollingUnits || [],
-    people: data.people || [],
-    syncedAt: data.syncedAt || new Date().toISOString(),
+    wards: payload.wards || [],
+    pollingUnits: payload.pollingUnits || [],
+    people: payload.people || [],
+    syncedAt: payload.syncedAt || new Date().toISOString(),
   };
 }
 
