@@ -43,7 +43,9 @@
           "photosPermission": "Allow Isialangwa Directory to access your photos.",
           "cameraPermission": "Allow Isialangwa Directory to access your camera."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset"
     ],
     "scheme": "isialangwa",
     "extra": {

@@ -12,12 +12,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { SearchNormal1, UserAdd, ArrowDown2 } from 'iconsax-react-native';
 import { searchPeople, getWards, getPollingUnits } from '../db/database';
+import { useSync } from '../context/SyncContext';
 import PersonCard from '../components/PersonCard';
 import SyncBanner from '../components/SyncBanner';
+import { T } from '../theme/colors';
 
 export default function PeopleScreen() {
   const navigation = useNavigation();
+  const { isOnline, syncNow } = useSync();
   const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,22 +89,28 @@ export default function PeopleScreen() {
       <SyncBanner />
 
       <View style={styles.header}>
-        <Text style={styles.title}>Directory</Text>
+        <View>
+          <Text style={styles.title}>Directory</Text>
+          <Text style={styles.subtitle}>{people.length} Constituents Registered</Text>
+        </View>
+
         <TouchableOpacity
           style={styles.addBtn}
           onPress={() => navigation.navigate('PersonForm')}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
-          <Text style={styles.addBtnText}>+ Register</Text>
+          <UserAdd size={16} color="#ffffff" variant="Bold" style={{ marginRight: 6 }} />
+          <Text style={styles.addBtnText}>Register</Text>
         </TouchableOpacity>
       </View>
 
       {/* Search Input */}
       <View style={styles.searchContainer}>
+        <SearchNormal1 size={18} color={T.muted} style={{ marginRight: 8 }} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search name, phone, voter card..."
-          placeholderTextColor="#94a3b8"
+          placeholder="Search by name, phone or voter card..."
+          placeholderTextColor={T.muted}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -118,8 +128,9 @@ export default function PeopleScreen() {
           onPress={() => setWardModalVisible(true)}
         >
           <Text style={[styles.filterChipText, selectedWard && styles.filterChipTextActive]} numberOfLines={1}>
-            {selectedWard ? selectedWard.name : 'All Wards'} ▾
+            {selectedWard ? selectedWard.name : 'All Wards'}
           </Text>
+          <ArrowDown2 size={12} color={selectedWard ? T.primary : T.muted} style={{ marginLeft: 4 }} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -132,18 +143,19 @@ export default function PeopleScreen() {
           disabled={!selectedWard}
         >
           <Text style={[styles.filterChipText, selectedPU && styles.filterChipTextActive]} numberOfLines={1}>
-            {selectedPU ? selectedPU.name : 'All Polling Units'} ▾
+            {selectedPU ? selectedPU.name : 'All Polling Units'}
           </Text>
+          <ArrowDown2 size={12} color={selectedPU ? T.primary : T.muted} style={{ marginLeft: 4 }} />
         </TouchableOpacity>
 
-        {(selectedWard || selectedPU || searchQuery) && (
+        {(selectedWard || selectedPU || searchQuery) ? (
           <TouchableOpacity style={styles.resetFilterBtn} onPress={clearFilters}>
             <Text style={styles.resetFilterText}>Reset</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
-      {/* List */}
+      {/* People List */}
       <FlatList
         data={people}
         keyExtractor={(item) => String(item.id)}
@@ -154,16 +166,24 @@ export default function PeopleScreen() {
           />
         )}
         contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={loadData} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={loading}
+            onRefresh={async () => {
+              if (isOnline) await syncNow();
+              await loadData();
+            }}
+          />
+        }
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>📂</Text>
-              <Text style={styles.emptyText}>No records found</Text>
+              <Text style={styles.emptyIcon}>👥</Text>
+              <Text style={styles.emptyText}>No registered members found</Text>
               <Text style={styles.emptySubtext}>
                 {searchQuery || selectedWard
-                  ? 'Try clearing filters or search queries'
-                  : 'Start registering members using the + Register button'}
+                  ? 'Try clearing filters or search query'
+                  : 'Start registering members using the Register button'}
               </Text>
             </View>
           ) : null
@@ -210,7 +230,7 @@ export default function PeopleScreen() {
         </View>
       </Modal>
 
-      {/* Polling Unit Selection Modal */}
+      {/* PU Selection Modal */}
       <Modal visible={puModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -254,43 +274,44 @@ export default function PeopleScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f8fafc' },
+  safe: { flex: 1, backgroundColor: T.bg },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: T.border,
   },
-  title: { fontSize: 24, fontWeight: '800', color: '#0f172a' },
+  title: { fontSize: 22, fontWeight: '800', color: T.text },
+  subtitle: { fontSize: 12, color: T.muted, marginTop: 2 },
   addBtn: {
-    backgroundColor: '#1a3a6b',
+    backgroundColor: T.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
   },
-  addBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  addBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
   searchContainer: {
-    position: 'relative',
-    marginHorizontal: 16,
-    marginBottom: 8,
-  },
-  searchInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
     borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#0f172a',
+    borderWidth: 1,
+    borderColor: T.border,
+    height: 44,
   },
-  clearSearchBtn: {
-    position: 'absolute',
-    right: 12,
-    top: 12,
-  },
-  clearSearchText: { color: '#94a3b8', fontSize: 14, fontWeight: '700' },
+  searchInput: { flex: 1, fontSize: 14, color: T.text },
+  clearSearchBtn: { padding: 4 },
+  clearSearchText: { color: T.muted, fontSize: 14, fontWeight: '700' },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -300,41 +321,28 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     flex: 1,
+    flexDirection: 'row',
     backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: T.border,
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 10,
     alignItems: 'center',
-  },
-  filterChipActive: {
-    borderColor: '#1a3a6b',
-    backgroundColor: '#eff6ff',
-  },
-  filterChipDisabled: {
-    backgroundColor: '#f1f5f9',
-    borderColor: '#e2e8f0',
-    opacity: 0.6,
-  },
-  filterChipText: { fontSize: 12, fontWeight: '600', color: '#475569' },
-  filterChipTextActive: { color: '#1a3a6b' },
-  resetFilterBtn: { paddingHorizontal: 6, paddingVertical: 4 },
-  resetFilterText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },
-  listContent: { paddingHorizontal: 16, paddingBottom: 24 },
-  emptyContainer: {
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 48,
   },
+  filterChipActive: { borderColor: T.primary, backgroundColor: T.primaryLight },
+  filterChipDisabled: { backgroundColor: T.bg, opacity: 0.6 },
+  filterChipText: { fontSize: 12, fontWeight: '600', color: T.text },
+  filterChipTextActive: { color: T.primary, fontWeight: '700' },
+  resetFilterBtn: { paddingHorizontal: 6, paddingVertical: 4 },
+  resetFilterText: { color: T.danger, fontSize: 12, fontWeight: '600' },
+  listContent: { paddingHorizontal: 16, paddingBottom: 24 },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 48 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
-  emptyText: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 4 },
-  emptySubtext: { fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 260 },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
+  emptyText: { fontSize: 16, fontWeight: '700', color: T.text, marginBottom: 4 },
+  emptySubtext: { fontSize: 13, color: T.muted, textAlign: 'center', maxWidth: 260 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(23,32,51,0.5)', justifyContent: 'flex-end' },
   modalContent: {
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 16,
@@ -348,18 +356,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: T.border,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
-  modalCloseText: { fontSize: 15, fontWeight: '700', color: '#1a3a6b' },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: T.text },
+  modalCloseText: { fontSize: 14, fontWeight: '700', color: T.primary },
   modalList: { padding: 12 },
-  modalOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  modalOptionSelected: { backgroundColor: '#eff6ff' },
-  modalOptionText: { fontSize: 15, color: '#334155' },
-  modalOptionTextSelected: { color: '#1a3a6b', fontWeight: '700' },
+  modalOption: { paddingVertical: 12, paddingHorizontal: 12, borderRadius: 8, marginBottom: 4 },
+  modalOptionSelected: { backgroundColor: T.primaryLight },
+  modalOptionText: { fontSize: 14, color: T.text },
+  modalOptionTextSelected: { color: T.primary, fontWeight: '700' },
 });

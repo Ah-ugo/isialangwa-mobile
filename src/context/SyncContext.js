@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { AppState } from 'react-native';
 import * as Network from 'expo-network';
-import { syncAll, uploadPerson } from '../api/sync';
+import { syncAll, uploadPerson, uploadWard, uploadPollingUnit } from '../api/sync';
 import {
   upsertWards,
   upsertPollingUnits,
@@ -17,13 +17,12 @@ import {
   getPendingCount,
   markUploadDone,
   markUploadFailed,
-  markPersonSynced,
+  markRecordSynced,
   getSyncMeta,
   setSyncMeta,
 } from '../db/database';
 
 const SyncContext = createContext(null);
-
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function SyncProvider({ children }) {
@@ -35,7 +34,6 @@ export function SyncProvider({ children }) {
   const isSyncingRef = useRef(false);
   const appState = useRef(AppState.currentState);
 
-  // Check network status
   const checkNetwork = useCallback(async () => {
     try {
       const state = await Network.getNetworkStateAsync();
@@ -45,7 +43,6 @@ export function SyncProvider({ children }) {
     }
   }, []);
 
-  // Refresh pending count
   const refreshPendingCount = useCallback(async () => {
     try {
       const count = await getPendingCount();
@@ -53,46 +50,11 @@ export function SyncProvider({ children }) {
     } catch {}
   }, []);
 
-  // Load last sync time from DB
   const loadLastSync = useCallback(async () => {
     try {
       const val = await getSyncMeta('last_sync_at');
       setLastSyncAt(val || null);
     } catch {}
-  }, []);
-
-  useEffect(() => {
-    checkNetwork();
-    loadLastSync();
-    refreshPendingCount();
-
-    // Poll network every 30s
-    const networkInterval = setInterval(checkNetwork, 30000);
-
-    // AppState listener for foreground sync
-    const subscription = AppState.addEventListener('change', async (nextState) => {
-      if (appState.current.match(/inactive|background/) && nextState === 'active') {
-        await checkNetwork();
-        await loadLastSync();
-        await refreshPendingCount();
-        // Auto-sync if online and last sync > 5 minutes ago
-        const lastSync = await getSyncMeta('last_sync_at');
-        if (lastSync) {
-          const diff = Date.now() - new Date(lastSync).getTime();
-          if (diff > SYNC_INTERVAL_MS) {
-            syncNow();
-          }
-        } else {
-          syncNow();
-        }
-      }
-      appState.current = nextState;
-    });
-
-    return () => {
-      clearInterval(networkInterval);
-      subscription.remove();
-    };
   }, []);
 
   const syncNow = useCallback(async () => {
@@ -102,18 +64,18 @@ export function SyncProvider({ children }) {
     setSyncError(null);
 
     try {
-      // 1. Pull from server
+      // 1. Pull from server (fetch delta or full sync)
       const since = await getSyncMeta('last_sync_at');
       const { wards, pollingUnits, people, syncedAt } = await syncAll(since);
 
-      await upsertWards(wards);
-      await upsertPollingUnits(pollingUnits);
-      await upsertPeople(people);
+      if (wards?.length > 0) await upsertWards(wards);
+      if (pollingUnits?.length > 0) await upsertPollingUnits(pollingUnits);
+      if (people?.length > 0) await upsertPeople(people);
 
       await setSyncMeta('last_sync_at', syncedAt);
       setLastSyncAt(syncedAt);
 
-      // 2. Push pending uploads
+      // 2. Push pending uploads (wards, polling units, people)
       const pending = await getPendingUploads();
       for (const upload of pending) {
         try {
@@ -125,17 +87,27 @@ export function SyncProvider({ children }) {
             continue;
           }
 
-          const result = await uploadPerson(payload);
+          let result;
+          const uploadType = upload.type || 'person';
+
+          if (uploadType === 'ward') {
+            result = await uploadWard(payload);
+          } else if (uploadType === 'polling_unit') {
+            result = await uploadPollingUnit(payload);
+          } else {
+            result = await uploadPerson(payload);
+          }
+
           await markUploadDone(upload.id);
 
-          // Update the local person record with server ID
           const serverId =
             result.data?._id ||
             result.data?.id ||
             result._id ||
             result.id;
+
           if (serverId && upload.local_id) {
-            await markPersonSynced(upload.local_id, serverId);
+            await markRecordSynced(uploadType, upload.local_id, serverId);
           }
         } catch (uploadErr) {
           const errMsg =
@@ -155,6 +127,37 @@ export function SyncProvider({ children }) {
       setIsSyncing(false);
     }
   }, [refreshPendingCount]);
+
+  useEffect(() => {
+    checkNetwork();
+    loadLastSync();
+    refreshPendingCount();
+
+    const networkInterval = setInterval(checkNetwork, 20000);
+
+    const subscription = AppState.addEventListener('change', async (nextState) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        await checkNetwork();
+        await loadLastSync();
+        await refreshPendingCount();
+        const lastSync = await getSyncMeta('last_sync_at');
+        if (lastSync) {
+          const diff = Date.now() - new Date(lastSync).getTime();
+          if (diff > SYNC_INTERVAL_MS) {
+            syncNow();
+          }
+        } else {
+          syncNow();
+        }
+      }
+      appState.current = nextState;
+    });
+
+    return () => {
+      clearInterval(networkInterval);
+      subscription.remove();
+    };
+  }, [checkNetwork, loadLastSync, refreshPendingCount, syncNow]);
 
   return (
     <SyncContext.Provider

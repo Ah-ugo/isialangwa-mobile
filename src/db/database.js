@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { INITIAL_WARDS, INITIAL_POLLING_UNITS } from './initialData';
 
 let db = null;
 
@@ -22,25 +23,29 @@ export async function initDB() {
 
     CREATE TABLE IF NOT EXISTS wards (
       id TEXT PRIMARY KEY,
-      name TEXT,
+      name TEXT NOT NULL,
       code TEXT,
-      updated_at TEXT
+      description TEXT,
+      updated_at TEXT,
+      synced INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS polling_units (
       id TEXT PRIMARY KEY,
-      name TEXT,
+      name TEXT NOT NULL,
       code TEXT,
-      ward_id TEXT,
-      updated_at TEXT
+      ward_id TEXT NOT NULL,
+      description TEXT,
+      updated_at TEXT,
+      synced INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS people (
       id TEXT PRIMARY KEY,
-      full_name TEXT,
-      phone TEXT,
-      ward_id TEXT,
-      polling_unit_id TEXT,
+      full_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      ward_id TEXT NOT NULL,
+      polling_unit_id TEXT NOT NULL,
       address TEXT,
       notes TEXT,
       preferred_contact TEXT,
@@ -54,6 +59,7 @@ export async function initDB() {
 
     CREATE TABLE IF NOT EXISTS pending_uploads (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT DEFAULT 'person',
       local_id TEXT,
       payload TEXT,
       status TEXT DEFAULT 'pending',
@@ -73,6 +79,33 @@ export async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_pu_ward ON polling_units(ward_id);
     CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_uploads(status);
   `);
+
+  // Seed real initial wards and polling units if local wards table is empty
+  const countRow = await database.getFirstAsync('SELECT COUNT(*) as count FROM wards');
+  if (!countRow || countRow.count === 0) {
+    await seedInitialData(database);
+  }
+}
+
+async function seedInitialData(database) {
+  const now = new Date().toISOString();
+  await database.withTransactionAsync(async () => {
+    for (const w of INITIAL_WARDS) {
+      await database.runAsync(
+        `INSERT OR IGNORE INTO wards (id, name, code, description, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+        [w.id, w.name, w.code || null, w.description || null, now]
+      );
+    }
+
+    for (const pu of INITIAL_POLLING_UNITS) {
+      await database.runAsync(
+        `INSERT OR IGNORE INTO polling_units (id, name, code, ward_id, description, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+        [pu.id, pu.name, pu.code || null, pu.wardId, null, now]
+      );
+    }
+  });
 }
 
 // ---- Wards ----
@@ -80,24 +113,58 @@ export async function initDB() {
 export async function upsertWards(wards) {
   if (!wards || wards.length === 0) return;
   const database = getDB();
+  const now = new Date().toISOString();
   await database.withTransactionAsync(async () => {
     for (const w of wards) {
       await database.runAsync(
-        `INSERT INTO wards (id, name, code, updated_at)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO wards (id, name, code, description, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, 1)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            code = excluded.code,
-           updated_at = excluded.updated_at`,
-        [w._id || w.id, w.name, w.code || null, w.updatedAt || w.updated_at || new Date().toISOString()]
+           description = excluded.description,
+           updated_at = excluded.updated_at,
+           synced = 1`,
+        [w._id || w.id, w.name, w.code || null, w.description || null, w.updatedAt || w.updated_at || now]
       );
     }
   });
 }
 
+export async function insertWard(ward) {
+  const database = getDB();
+  const id = ward.id || `ward_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  await database.runAsync(
+    `INSERT INTO wards (id, name, code, description, updated_at, synced)
+     VALUES (?, ?, ?, ?, ?, 0)`,
+    [id, ward.name.trim(), ward.code ? ward.code.trim() : null, ward.description || null, now]
+  );
+
+  const payload = {
+    name: ward.name.trim(),
+    code: ward.code ? ward.code.trim() : undefined,
+    description: ward.description || undefined,
+  };
+  await insertPendingUpload('ward', id, payload);
+  return id;
+}
+
 export async function getWards() {
   const database = getDB();
-  return database.getAllAsync('SELECT * FROM wards ORDER BY name ASC');
+  return database.getAllAsync('SELECT * FROM wards ORDER BY code ASC, name ASC');
+}
+
+export async function getWardsWithCounts() {
+  const database = getDB();
+  const sql = `
+    SELECT w.*,
+      (SELECT COUNT(*) FROM polling_units pu WHERE pu.ward_id = w.id) as polling_unit_count,
+      (SELECT COUNT(*) FROM people p WHERE p.ward_id = w.id) as people_count
+    FROM wards w
+    ORDER BY w.code ASC, w.name ASC
+  `;
+  return database.getAllAsync(sql);
 }
 
 // ---- Polling Units ----
@@ -105,37 +172,76 @@ export async function getWards() {
 export async function upsertPollingUnits(units) {
   if (!units || units.length === 0) return;
   const database = getDB();
+  const now = new Date().toISOString();
   await database.withTransactionAsync(async () => {
     for (const u of units) {
       await database.runAsync(
-        `INSERT INTO polling_units (id, name, code, ward_id, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO polling_units (id, name, code, ward_id, description, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            code = excluded.code,
            ward_id = excluded.ward_id,
-           updated_at = excluded.updated_at`,
+           description = excluded.description,
+           updated_at = excluded.updated_at,
+           synced = 1`,
         [
           u._id || u.id,
           u.name,
           u.code || null,
           u.wardId || u.ward_id || (u.ward && (u.ward._id || u.ward)) || null,
-          u.updatedAt || u.updated_at || new Date().toISOString(),
+          u.description || null,
+          u.updatedAt || u.updated_at || now,
         ]
       );
     }
   });
 }
 
-export async function getPollingUnits(wardId) {
+export async function insertPollingUnit(pu) {
   const database = getDB();
+  const id = pu.id || `pu_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  await database.runAsync(
+    `INSERT INTO polling_units (id, name, code, ward_id, description, updated_at, synced)
+     VALUES (?, ?, ?, ?, ?, ?, 0)`,
+    [id, pu.name.trim(), pu.code ? pu.code.trim() : null, pu.wardId, pu.description || null, now]
+  );
+
+  const payload = {
+    name: pu.name.trim(),
+    code: pu.code ? pu.code.trim() : undefined,
+    wardId: pu.wardId,
+    description: pu.description || undefined,
+  };
+  await insertPendingUpload('polling_unit', id, payload);
+  return id;
+}
+
+export async function getPollingUnits(wardId, q) {
+  const database = getDB();
+  const params = [];
+  let where = '1=1';
+
   if (wardId) {
-    return database.getAllAsync(
-      'SELECT * FROM polling_units WHERE ward_id = ? ORDER BY name ASC',
-      [wardId]
-    );
+    where += ' AND pu.ward_id = ?';
+    params.push(wardId);
   }
-  return database.getAllAsync('SELECT * FROM polling_units ORDER BY name ASC');
+  if (q && q.trim()) {
+    where += ' AND (pu.name LIKE ? OR pu.code LIKE ?)';
+    const term = `%${q.trim()}%`;
+    params.push(term, term);
+  }
+
+  const sql = `
+    SELECT pu.*, w.name as ward_name, w.code as ward_code,
+      (SELECT COUNT(*) FROM people p WHERE p.polling_unit_id = pu.id) as people_count
+    FROM polling_units pu
+    LEFT JOIN wards w ON w.id = pu.ward_id
+    WHERE ${where}
+    ORDER BY pu.code ASC, pu.name ASC
+  `;
+  return database.getAllAsync(sql, params);
 }
 
 // ---- People ----
@@ -143,6 +249,7 @@ export async function getPollingUnits(wardId) {
 export async function upsertPeople(people) {
   if (!people || people.length === 0) return;
   const database = getDB();
+  const now = new Date().toISOString();
   await database.withTransactionAsync(async () => {
     for (const p of people) {
       await database.runAsync(
@@ -156,7 +263,7 @@ export async function upsertPeople(people) {
            address = excluded.address,
            notes = excluded.notes,
            preferred_contact = excluded.preferred_contact,
-           image = excluded.image,
+           image = COALESCE(excluded.image, people.image),
            voter_card_number = excluded.voter_card_number,
            contactable = excluded.contactable,
            updated_at = excluded.updated_at,
@@ -165,25 +272,25 @@ export async function upsertPeople(people) {
           p._id || p.id,
           p.fullName || p.full_name,
           p.phone,
-          p.wardId || p.ward_id || (p.ward && (p.ward._id || p.ward)) || null,
-          p.pollingUnitId || p.polling_unit_id || (p.pollingUnit && (p.pollingUnit._id || p.pollingUnit)) || null,
+          p.wardId || p.ward_id || (p.ward && (p.ward._id || p.ward.id)),
+          p.pollingUnitId || p.polling_unit_id || (p.pollingUnit && (p.pollingUnit._id || p.pollingUnit.id)),
           p.address || null,
           p.notes || null,
           p.preferredContact || p.preferred_contact || null,
           p.image || null,
           p.voterCardNumber || p.voter_card_number || null,
           p.contactable !== undefined ? (p.contactable ? 1 : 0) : 1,
-          p.createdAt || p.created_at || new Date().toISOString(),
-          p.updatedAt || p.updated_at || new Date().toISOString(),
+          p.createdAt || p.created_at || now,
+          p.updatedAt || p.updated_at || now,
         ]
       );
     }
   });
 }
 
-export async function insertPerson(person) {
+export async function insertPerson(person, payload) {
   const database = getDB();
-  const id = person.id || `local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const id = person.id || `person_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
   await database.runAsync(
     `INSERT INTO people (id, full_name, phone, ward_id, polling_unit_id, address, notes, preferred_contact, image, voter_card_number, contactable, created_at, updated_at, synced)
@@ -192,8 +299,8 @@ export async function insertPerson(person) {
       id,
       person.full_name,
       person.phone,
-      person.ward_id || null,
-      person.polling_unit_id || null,
+      person.ward_id,
+      person.polling_unit_id,
       person.address || null,
       person.notes || null,
       person.preferred_contact || null,
@@ -204,6 +311,8 @@ export async function insertPerson(person) {
       now,
     ]
   );
+
+  await insertPendingUpload('person', id, payload);
   return id;
 }
 
@@ -229,7 +338,9 @@ export async function searchPeople(q, wardId, pollingUnitId) {
   const sql = `
     SELECT p.*,
            w.name AS ward_name,
-           pu.name AS polling_unit_name
+           w.code AS ward_code,
+           pu.name AS polling_unit_name,
+           pu.code AS polling_unit_code
     FROM people p
     LEFT JOIN wards w ON w.id = p.ward_id
     LEFT JOIN polling_units pu ON pu.id = p.polling_unit_id
@@ -245,7 +356,9 @@ export async function getPersonById(id) {
   const rows = await database.getAllAsync(
     `SELECT p.*,
             w.name AS ward_name,
-            pu.name AS polling_unit_name
+            w.code AS ward_code,
+            pu.name AS polling_unit_name,
+            pu.code AS polling_unit_code
      FROM people p
      LEFT JOIN wards w ON w.id = p.ward_id
      LEFT JOIN polling_units pu ON pu.id = p.polling_unit_id
@@ -255,32 +368,57 @@ export async function getPersonById(id) {
   return rows[0] || null;
 }
 
-export async function getPeopleCount() {
+export async function getRecentPeople(limit = 5) {
   const database = getDB();
-  const row = await database.getFirstAsync('SELECT COUNT(*) as count FROM people');
-  return row ? row.count : 0;
+  const sql = `
+    SELECT p.*,
+           w.name AS ward_name,
+           pu.name AS polling_unit_name
+    FROM people p
+    LEFT JOIN wards w ON w.id = p.ward_id
+    LEFT JOIN polling_units pu ON pu.id = p.polling_unit_id
+    ORDER BY p.created_at DESC
+    LIMIT ?
+  `;
+  return database.getAllAsync(sql, [limit]);
 }
 
 export async function checkPhoneDuplicate(phone, excludeId) {
   const database = getDB();
-  let sql = 'SELECT id FROM people WHERE phone = ?';
+  let sql = 'SELECT id, full_name FROM people WHERE phone = ?';
   const params = [phone];
   if (excludeId) {
     sql += ' AND id != ?';
     params.push(excludeId);
   }
-  const row = await database.getFirstAsync(sql, params);
-  return !!row;
+  return database.getFirstAsync(sql, params);
 }
 
-// ---- Pending Uploads ----
+export async function getDashboardStats() {
+  const database = getDB();
+  const [peopleRow, wardsRow, puRow, pendingRow] = await Promise.all([
+    database.getFirstAsync('SELECT COUNT(*) as count FROM people'),
+    database.getFirstAsync('SELECT COUNT(*) as count FROM wards'),
+    database.getFirstAsync('SELECT COUNT(*) as count FROM polling_units'),
+    database.getFirstAsync("SELECT COUNT(*) as count FROM pending_uploads WHERE status = 'pending'"),
+  ]);
 
-export async function insertPendingUpload(localId, payload) {
+  return {
+    totalPeople: peopleRow?.count || 0,
+    totalWards: wardsRow?.count || 0,
+    totalPollingUnits: puRow?.count || 0,
+    pendingCount: pendingRow?.count || 0,
+  };
+}
+
+// ---- Pending Uploads Queue ----
+
+export async function insertPendingUpload(type, localId, payload) {
   const database = getDB();
   await database.runAsync(
-    `INSERT INTO pending_uploads (local_id, payload, status, created_at, retry_count)
-     VALUES (?, ?, 'pending', ?, 0)`,
-    [localId, JSON.stringify(payload), new Date().toISOString()]
+    `INSERT INTO pending_uploads (type, local_id, payload, status, created_at, retry_count)
+     VALUES (?, ?, ?, 'pending', ?, 0)`,
+    [type, localId, JSON.stringify(payload), new Date().toISOString()]
   );
 }
 
@@ -301,10 +439,7 @@ export async function getPendingCount() {
 
 export async function markUploadDone(id) {
   const database = getDB();
-  await database.runAsync(
-    "UPDATE pending_uploads SET status = 'done' WHERE id = ?",
-    [id]
-  );
+  await database.runAsync("UPDATE pending_uploads SET status = 'done' WHERE id = ?", [id]);
 }
 
 export async function markUploadFailed(id, error) {
@@ -319,15 +454,23 @@ export async function markUploadFailed(id, error) {
   );
 }
 
-export async function markPersonSynced(localId, serverId) {
+export async function markRecordSynced(type, localId, serverId) {
   const database = getDB();
+  const table = type === 'ward' ? 'wards' : type === 'polling_unit' ? 'polling_units' : 'people';
   if (serverId && serverId !== localId) {
     await database.runAsync(
-      'UPDATE people SET id = ?, synced = 1 WHERE id = ?',
+      `UPDATE ${table} SET id = ?, synced = 1 WHERE id = ?`,
       [serverId, localId]
     );
+    // If ward changed ID, update child polling units and people
+    if (type === 'ward') {
+      await database.runAsync('UPDATE polling_units SET ward_id = ? WHERE ward_id = ?', [serverId, localId]);
+      await database.runAsync('UPDATE people SET ward_id = ? WHERE ward_id = ?', [serverId, localId]);
+    } else if (type === 'polling_unit') {
+      await database.runAsync('UPDATE people SET polling_unit_id = ? WHERE polling_unit_id = ?', [serverId, localId]);
+    }
   } else {
-    await database.runAsync('UPDATE people SET synced = 1 WHERE id = ?', [localId]);
+    await database.runAsync(`UPDATE ${table} SET synced = 1 WHERE id = ?`, [localId]);
   }
 }
 
@@ -335,10 +478,7 @@ export async function markPersonSynced(localId, serverId) {
 
 export async function getSyncMeta(key) {
   const database = getDB();
-  const row = await database.getFirstAsync(
-    'SELECT value FROM sync_meta WHERE key = ?',
-    [key]
-  );
+  const row = await database.getFirstAsync('SELECT value FROM sync_meta WHERE key = ?', [key]);
   return row ? row.value : null;
 }
 

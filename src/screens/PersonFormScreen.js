@@ -14,15 +14,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { Camera, CloseCircle, ArrowDown2, TickCircle } from 'iconsax-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
   getWards,
   getPollingUnits,
   insertPerson,
-  insertPendingUpload,
   checkPhoneDuplicate,
 } from '../db/database';
 import { useSync } from '../context/SyncContext';
+import { T } from '../theme/colors';
 
 export default function PersonFormScreen() {
   const navigation = useNavigation();
@@ -37,7 +38,7 @@ export default function PersonFormScreen() {
   const [preferredContact, setPreferredContact] = useState('call');
   const [voterCardNumber, setVoterCardNumber] = useState('');
   const [imageUri, setImageUri] = useState(null);
-  const [consentGranted, setConsentGranted] = useState(false);
+  const [consentGranted, setConsentGranted] = useState(true);
 
   const [wards, setWards] = useState([]);
   const [pollingUnits, setPollingUnits] = useState([]);
@@ -73,10 +74,10 @@ export default function PersonFormScreen() {
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.6,
-        base64: true,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
+        // Save local device URI — NO Cloudinary upload while offline
         setImageUri(result.assets[0].uri);
       }
     } catch (err) {
@@ -98,7 +99,7 @@ export default function PersonFormScreen() {
     }
     const cleanPhone = normalizePhone(phone.trim());
     if (!cleanPhone || cleanPhone.length < 10) {
-      Alert.alert('Validation Error', 'Please enter a valid phone number');
+      Alert.alert('Validation Error', 'Please enter a valid phone number, e.g. 0803 123 4567');
       return;
     }
     if (!ward) {
@@ -110,25 +111,25 @@ export default function PersonFormScreen() {
       return;
     }
     if (!consentGranted) {
-      Alert.alert('Consent Required', 'You must verify person consent before registration');
+      Alert.alert('Consent Required', 'You must verify person consent before saving this record');
       return;
     }
 
     try {
       setSubmitting(true);
 
-      // Check duplicate locally
-      const isDuplicate = await checkPhoneDuplicate(cleanPhone);
-      if (isDuplicate) {
+      // Check duplicate against local SQLite database
+      const dup = await checkPhoneDuplicate(cleanPhone);
+      if (dup) {
         Alert.alert(
-          'Duplicate Warning',
-          'A person with this phone number already exists in your local records.'
+          'Duplicate Phone Warning',
+          `This phone number already exists for "${dup.full_name}". Please verify the number.`
         );
         setSubmitting(false);
         return;
       }
 
-      const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const localId = `person_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const personRecord = {
         id: localId,
         full_name: fullName.trim(),
@@ -138,15 +139,11 @@ export default function PersonFormScreen() {
         address: address.trim() || null,
         notes: notes.trim() || null,
         preferred_contact: preferredContact,
-        image: imageUri || null,
+        image: imageUri || null, // Stored strictly locally without calling Cloudinary
         voter_card_number: voterCardNumber.trim() || null,
         contactable: 1,
       };
 
-      // 1. Insert into local SQLite
-      await insertPerson(personRecord);
-
-      // 2. Queue for server sync
       const serverPayload = {
         fullName: fullName.trim(),
         phone: cleanPhone,
@@ -163,10 +160,11 @@ export default function PersonFormScreen() {
         },
       };
 
-      await insertPendingUpload(localId, serverPayload);
+      // 1. Save to SQLite + 2. Queue for upload
+      await insertPerson(personRecord, serverPayload);
       await refreshPendingCount();
 
-      // 3. Attempt immediate sync in background if online
+      // 3. Attempt sync if online
       if (isOnline) {
         syncNow();
       }
@@ -174,12 +172,12 @@ export default function PersonFormScreen() {
       Alert.alert(
         'Registration Saved',
         isOnline
-          ? 'Record saved and syncing to server.'
-          : 'Record saved locally. It will automatically sync when online.',
+          ? 'Constituent saved and synced to the directory.'
+          : 'Constituent saved locally. Photo and details are stored offline and will sync when online.',
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (err) {
-      Alert.alert('Error', 'Failed to save person: ' + (err.message || 'Unknown error'));
+      Alert.alert('Error', 'Failed to save record: ' + (err.message || 'Unknown error'));
     } finally {
       setSubmitting(false);
     }
@@ -187,9 +185,10 @@ export default function PersonFormScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backBtnText}>Cancel</Text>
+        <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()}>
+          <CloseCircle size={24} color={T.muted} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Register Person</Text>
         <TouchableOpacity
@@ -206,21 +205,22 @@ export default function PersonFormScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {/* Photo Picker */}
+        {/* Photo Picker — Offline First (no Cloudinary when offline) */}
         <View style={styles.photoContainer}>
-          <TouchableOpacity style={styles.photoPicker} onPress={pickImage}>
+          <TouchableOpacity style={styles.photoPicker} onPress={pickImage} activeOpacity={0.8}>
             {imageUri ? (
               <Image source={{ uri: imageUri }} style={styles.photo} />
             ) : (
               <View style={styles.photoPlaceholder}>
-                <Text style={styles.photoIcon}>📷</Text>
+                <Camera size={26} color={T.primary} variant="Bold" />
                 <Text style={styles.photoText}>Add Photo</Text>
               </View>
             )}
           </TouchableOpacity>
+          <Text style={styles.photoSubtext}>Photos are saved locally and synced when online</Text>
         </View>
 
-        {/* Basic Details */}
+        {/* Basic Information */}
         <View style={styles.formSection}>
           <Text style={styles.sectionHeading}>Basic Information</Text>
 
@@ -228,7 +228,7 @@ export default function PersonFormScreen() {
           <TextInput
             style={styles.input}
             placeholder="e.g. Chukwuemeka Okafor"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={T.muted}
             value={fullName}
             onChangeText={setFullName}
           />
@@ -237,13 +237,13 @@ export default function PersonFormScreen() {
           <TextInput
             style={styles.input}
             placeholder="e.g. 0803 123 4567"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={T.muted}
             value={phone}
             onChangeText={setPhone}
             keyboardType="phone-pad"
           />
 
-          <Text style={styles.label}>Preferred Contact</Text>
+          <Text style={styles.label}>Preferred Contact Channel</Text>
           <View style={styles.radioGroup}>
             <TouchableOpacity
               style={[styles.radioButton, preferredContact === 'call' && styles.radioButtonActive]}
@@ -271,9 +271,9 @@ export default function PersonFormScreen() {
           </View>
         </View>
 
-        {/* Electoral Area */}
+        {/* Electoral Ward & Polling Unit */}
         <View style={styles.formSection}>
-          <Text style={styles.sectionHeading}>Ward & Polling Unit</Text>
+          <Text style={styles.sectionHeading}>Electoral Location</Text>
 
           <Text style={styles.label}>Ward *</Text>
           <TouchableOpacity
@@ -283,7 +283,7 @@ export default function PersonFormScreen() {
             <Text style={[styles.pickerBtnText, !ward && styles.placeholderText]}>
               {ward ? `${ward.name} ${ward.code ? `(${ward.code})` : ''}` : 'Select Ward...'}
             </Text>
-            <Text style={styles.pickerArrow}>▾</Text>
+            <ArrowDown2 size={16} color={T.muted} />
           </TouchableOpacity>
 
           <Text style={styles.label}>Polling Unit *</Text>
@@ -299,29 +299,29 @@ export default function PersonFormScreen() {
                 ? 'Select Polling Unit...'
                 : 'Select Ward First'}
             </Text>
-            <Text style={styles.pickerArrow}>▾</Text>
+            <ArrowDown2 size={16} color={T.muted} />
           </TouchableOpacity>
 
           <Text style={styles.label}>Voter Identification Number (VIN)</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. 90F5B0123456789"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={T.muted}
             value={voterCardNumber}
             onChangeText={setVoterCardNumber}
             autoCapitalize="characters"
           />
         </View>
 
-        {/* Address & Notes */}
+        {/* Location & Notes */}
         <View style={styles.formSection}>
-          <Text style={styles.sectionHeading}>Additional Details</Text>
+          <Text style={styles.sectionHeading}>Location & Notes</Text>
 
-          <Text style={styles.label}>Address / Village</Text>
+          <Text style={styles.label}>Residential Address / Village</Text>
           <TextInput
             style={styles.input}
-            placeholder="Residential address"
-            placeholderTextColor="#94a3b8"
+            placeholder="e.g. Umueze Village, Isiala Ngwa South"
+            placeholderTextColor={T.muted}
             value={address}
             onChangeText={setAddress}
           />
@@ -329,8 +329,8 @@ export default function PersonFormScreen() {
           <Text style={styles.label}>Notes</Text>
           <TextInput
             style={[styles.input, styles.textArea]}
-            placeholder="Any notable details or remarks"
-            placeholderTextColor="#94a3b8"
+            placeholder="Additional notes about constituent"
+            placeholderTextColor={T.muted}
             value={notes}
             onChangeText={setNotes}
             multiline
@@ -338,18 +338,18 @@ export default function PersonFormScreen() {
           />
         </View>
 
-        {/* Consent Section */}
+        {/* Consent Card */}
         <View style={styles.consentCard}>
           <View style={styles.consentRow}>
             <Switch
               value={consentGranted}
               onValueChange={setConsentGranted}
-              trackColor={{ false: '#cbd5e1', true: '#1a3a6b' }}
+              trackColor={{ false: T.border, true: T.primary }}
               thumbColor="#ffffff"
             />
             <Text style={styles.consentText}>
-              I confirm the person gave consent for their details to be collected and processed for
-              directory outreach.
+              I confirm the constituent gave consent for their details to be collected and recorded for
+              directory communication.
             </Text>
           </View>
         </View>
@@ -384,7 +384,7 @@ export default function PersonFormScreen() {
         </View>
       </Modal>
 
-      {/* PU Selection Modal */}
+      {/* Polling Unit Selection Modal */}
       <Modal visible={puModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -420,7 +420,7 @@ export default function PersonFormScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f8fafc' },
+  safe: { flex: 1, backgroundColor: T.bg },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -428,59 +428,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: T.border,
     backgroundColor: '#ffffff',
   },
-  backBtn: { paddingVertical: 4 },
-  backBtnText: { color: '#64748b', fontSize: 15 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a' },
+  closeBtn: { padding: 4 },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: T.text },
   saveBtn: {
-    backgroundColor: '#1a3a6b',
+    backgroundColor: T.primary,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
   },
   saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  saveBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
   container: { padding: 16, paddingBottom: 40 },
   photoContainer: { alignItems: 'center', marginBottom: 20 },
   photoPicker: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: '#e2e8f0',
+    width: 86,
+    height: 86,
+    borderRadius: 16,
+    backgroundColor: T.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#cbd5e1',
+    borderWidth: 1.5,
+    borderColor: T.primary,
   },
   photo: { width: '100%', height: '100%' },
   photoPlaceholder: { alignItems: 'center' },
-  photoIcon: { fontSize: 28 },
-  photoText: { fontSize: 11, color: '#64748b', marginTop: 2, fontWeight: '600' },
+  photoText: { fontSize: 11, color: T.primary, marginTop: 4, fontWeight: '700' },
+  photoSubtext: { fontSize: 11, color: T.muted, marginTop: 6 },
   formSection: {
     backgroundColor: '#ffffff',
     borderRadius: 14,
     padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: T.border,
+    shadowColor: '#172033',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.03,
     shadowRadius: 4,
     elevation: 2,
   },
-  sectionHeading: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 12 },
-  label: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 6 },
+  sectionHeading: { fontSize: 15, fontWeight: '700', color: T.text, marginBottom: 12 },
+  label: { fontSize: 13, fontWeight: '600', color: T.text, marginBottom: 6 },
   input: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: T.bg,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: T.border,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: '#0f172a',
+    color: T.text,
     marginBottom: 14,
   },
   textArea: { height: 70, textAlignVertical: 'top' },
@@ -488,20 +489,20 @@ const styles = StyleSheet.create({
   radioButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: T.border,
+    borderRadius: 10,
     paddingVertical: 10,
     alignItems: 'center',
     backgroundColor: '#ffffff',
   },
-  radioButtonActive: { borderColor: '#1a3a6b', backgroundColor: '#eff6ff' },
-  radioText: { fontSize: 13, color: '#64748b', fontWeight: '600' },
-  radioTextActive: { color: '#1a3a6b', fontWeight: '700' },
+  radioButtonActive: { borderColor: T.primary, backgroundColor: T.primaryLight },
+  radioText: { fontSize: 13, color: T.muted, fontWeight: '600' },
+  radioTextActive: { color: T.primary, fontWeight: '700' },
   pickerBtn: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: T.bg,
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: T.border,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -510,26 +511,27 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   pickerBtnDisabled: { opacity: 0.5 },
-  pickerBtnText: { fontSize: 14, color: '#0f172a' },
-  placeholderText: { color: '#94a3b8' },
-  pickerArrow: { fontSize: 16, color: '#64748b' },
+  pickerBtnText: { fontSize: 14, color: T.text },
+  placeholderText: { color: T.muted },
   consentCard: {
     backgroundColor: '#ffffff',
     borderRadius: 14,
     padding: 16,
     marginBottom: 16,
     borderLeftWidth: 4,
-    borderLeftColor: '#1a3a6b',
+    borderLeftColor: T.primary,
+    borderWidth: 1,
+    borderColor: T.border,
   },
   consentRow: { flexDirection: 'row', alignItems: 'center' },
   consentText: {
     fontSize: 13,
-    color: '#334155',
+    color: T.text,
     marginLeft: 12,
     flex: 1,
     lineHeight: 18,
   },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(23,32,51,0.5)', justifyContent: 'flex-end' },
   modalContent: {
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 16,
@@ -543,13 +545,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: T.border,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
-  modalCloseText: { fontSize: 15, fontWeight: '700', color: '#1a3a6b' },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: T.text },
+  modalCloseText: { fontSize: 14, fontWeight: '700', color: T.primary },
   modalList: { padding: 12 },
   modalOption: { paddingVertical: 12, paddingHorizontal: 12, borderRadius: 8, marginBottom: 4 },
-  modalOptionSelected: { backgroundColor: '#eff6ff' },
-  modalOptionText: { fontSize: 15, color: '#334155' },
-  modalOptionTextSelected: { color: '#1a3a6b', fontWeight: '700' },
+  modalOptionSelected: { backgroundColor: T.primaryLight },
+  modalOptionText: { fontSize: 14, color: T.text },
+  modalOptionTextSelected: { color: T.primary, fontWeight: '700' },
 });

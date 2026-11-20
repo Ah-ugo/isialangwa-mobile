@@ -10,234 +10,537 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { format, formatDistanceToNow } from 'date-fns';
+import {
+  People,
+  Map,
+  Location,
+  UserAdd,
+  SearchNormal1,
+  RefreshCircle,
+  Timer1,
+  AddSquare,
+  ArrowRight2,
+} from 'iconsax-react-native';
 import { useSync } from '../context/SyncContext';
 import { useAuth } from '../context/AuthContext';
-import { getPeopleCount, getPendingCount } from '../db/database';
+import { getDashboardStats, getRecentPeople, getWardsWithCounts } from '../db/database';
 import SyncBanner from '../components/SyncBanner';
+import WardFormModal from '../components/WardFormModal';
+import PollingUnitFormModal from '../components/PollingUnitFormModal';
+import { T, APP_NAME, SUB_TITLE } from '../theme/colors';
 
 export default function HomeScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
-  const { isSyncing, lastSyncAt, pendingCount, isOnline, syncNow, syncError } = useSync();
-  const [totalPeople, setTotalPeople] = useState(0);
-  const [localPending, setLocalPending] = useState(0);
+  const { isSyncing, lastSyncAt, pendingCount, isOnline, syncNow } = useSync();
+  const [stats, setStats] = useState({ totalPeople: 0, totalWards: 10, totalPollingUnits: 0, pendingCount: 0 });
+  const [recentPeople, setRecentPeople] = useState([]);
+  const [wardSummaries, setWardSummaries] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [wardModalOpen, setWardModalOpen] = useState(false);
+  const [puModalOpen, setPuModalOpen] = useState(false);
 
-  const loadStats = useCallback(async () => {
+  const loadAllData = useCallback(async () => {
     try {
-      const [count, pending] = await Promise.all([getPeopleCount(), getPendingCount()]);
-      setTotalPeople(count);
-      setLocalPending(pending);
-    } catch {}
+      const [s, recent, wards] = await Promise.all([
+        getDashboardStats(),
+        getRecentPeople(5),
+        getWardsWithCounts(),
+      ]);
+      setStats(s);
+      setRecentPeople(recent);
+      setWardSummaries(wards);
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+    }
   }, []);
 
   useEffect(() => {
-    loadStats();
-  }, [loadStats, pendingCount]);
+    loadAllData();
+  }, [loadAllData, pendingCount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadStats();
-    setRefreshing(false);
-  }, [loadStats]);
-
-  const handleSync = useCallback(async () => {
-    await syncNow();
-    await loadStats();
-  }, [syncNow, loadStats]);
-
-  const formatLastSync = () => {
-    if (!lastSyncAt) return 'Never synced';
-    try {
-      return `Last sync: ${formatDistanceToNow(new Date(lastSyncAt), { addSuffix: true })}`;
-    } catch {
-      return `Last sync: ${lastSyncAt}`;
+    if (isOnline) {
+      await syncNow();
     }
-  };
+    await loadAllData();
+    setRefreshing(false);
+  }, [isOnline, syncNow, loadAllData]);
+
+  const firstName = user?.fullName ? user.fullName.split(' ')[0] : 'Agent';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <SyncBanner />
+
       <ScrollView
         contentContainerStyle={styles.container}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Greeting */}
-        <View style={styles.greeting}>
-          <Text style={styles.greetingText}>
-            Welcome back{user?.name ? `, ${user.name}` : ''}
-          </Text>
-          <Text style={styles.greetingSubtext}>{formatLastSync()}</Text>
-        </View>
-
-        {/* Sync error */}
-        {syncError ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>⚠️ {syncError}</Text>
+        {/* APC Banner Header */}
+        <View style={styles.topHeader}>
+          <View style={styles.brandRow}>
+            <View style={styles.brandBadge}>
+              <Text style={styles.brandBadgeText}>APC</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.appName} numberOfLines={1}>{APP_NAME}</Text>
+              <Text style={styles.appSub}>{SUB_TITLE}</Text>
+            </View>
           </View>
-        ) : null}
 
-        {/* Stats Cards */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, styles.statCardBlue]}>
-            <Text style={styles.statNumber}>{totalPeople}</Text>
-            <Text style={styles.statLabel}>Total Registered</Text>
-          </View>
-          <View style={[styles.statCard, localPending > 0 ? styles.statCardAmber : styles.statCardGreen]}>
-            <Text style={styles.statNumber}>{localPending}</Text>
-            <Text style={styles.statLabel}>Pending Upload</Text>
+          <View style={styles.greetingBox}>
+            <Text style={styles.greetingTitle}>{greeting}, {firstName}</Text>
+            <Text style={styles.greetingSub}>Here’s what’s in the directory today</Text>
           </View>
         </View>
 
-        {/* Quick Actions */}
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-
+        {/* Global Search Bar */}
         <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => navigation.navigate('PersonForm')}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.primaryButtonIcon}>+</Text>
-          <Text style={styles.primaryButtonText}>Register New Person</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.secondaryButton}
+          style={styles.searchPanel}
           onPress={() => navigation.navigate('People')}
           activeOpacity={0.85}
         >
-          <Text style={styles.secondaryButtonText}>👥  View All People</Text>
+          <SearchNormal1 size={18} color={T.muted} style={{ marginRight: 10 }} />
+          <Text style={styles.searchPlaceholder}>Search people, wards or polling units...</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.syncButton, (!isOnline || isSyncing) && styles.syncButtonDisabled]}
-          onPress={handleSync}
-          disabled={!isOnline || isSyncing}
-          activeOpacity={0.85}
-        >
-          {isSyncing ? (
-            <ActivityIndicator color="#fff" size="small" style={{ marginRight: 8 }} />
-          ) : (
-            <Text style={styles.syncButtonIcon}>↻</Text>
-          )}
-          <Text style={styles.syncButtonText}>
-            {isSyncing ? 'Syncing…' : isOnline ? 'Sync Now' : 'Offline — Cannot Sync'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Status Info */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Connection</Text>
-            <View style={[styles.badge, isOnline ? styles.badgeGreen : styles.badgeRed]}>
-              <Text style={styles.badgeText}>{isOnline ? 'Online' : 'Offline'}</Text>
+        {/* 4 Stat Cards Matching Website */}
+        <View style={styles.statsGrid}>
+          {/* Total People */}
+          <View style={styles.statCard}>
+            <View style={[styles.statIconBox, { backgroundColor: T.primaryLight }]}>
+              <People size={20} color={T.primary} variant="Bold" />
             </View>
+            <Text style={styles.statNumber}>{stats.totalPeople}</Text>
+            <Text style={styles.statLabel}>Total people</Text>
           </View>
-          <View style={styles.divider} />
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Pending uploads</Text>
-            <Text style={styles.statusValue}>{localPending}</Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Total in local DB</Text>
-            <Text style={styles.statusValue}>{totalPeople}</Text>
+
+          {/* Total Wards */}
+          <TouchableOpacity
+            style={styles.statCard}
+            onPress={() => navigation.navigate('Wards')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIconBox, { backgroundColor: '#FEE2E2' }]}>
+              <Map size={20} color={T.brandRed} variant="Bold" />
+            </View>
+            <Text style={styles.statNumber}>{stats.totalWards}</Text>
+            <Text style={styles.statLabel}>Total wards</Text>
+          </TouchableOpacity>
+
+          {/* Polling Units */}
+          <TouchableOpacity
+            style={styles.statCard}
+            onPress={() => navigation.navigate('PollingUnits')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIconBox, { backgroundColor: '#E0F2FE' }]}>
+              <Location size={20} color={T.brandBlue} variant="Bold" />
+            </View>
+            <Text style={styles.statNumber}>{stats.totalPollingUnits}</Text>
+            <Text style={styles.statLabel}>Polling units</Text>
+          </TouchableOpacity>
+
+          {/* Pending Uploads */}
+          <View style={styles.statCard}>
+            <View style={[styles.statIconBox, { backgroundColor: '#FEF3C7' }]}>
+              <Timer1 size={20} color={T.warning} variant="Bold" />
+            </View>
+            <Text style={styles.statNumber}>{pendingCount}</Text>
+            <Text style={styles.statLabel}>Pending sync</Text>
           </View>
         </View>
+
+        {/* Action Buttons */}
+        <Text style={styles.sectionTitle}>Directory Actions</Text>
+        <TouchableOpacity
+          style={styles.primaryActionBtn}
+          onPress={() => navigation.navigate('PersonForm')}
+          activeOpacity={0.85}
+        >
+          <UserAdd size={20} color="#ffffff" variant="Bold" style={{ marginRight: 8 }} />
+          <Text style={styles.primaryActionText}>Register New Person</Text>
+        </TouchableOpacity>
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={styles.secondaryActionBtn}
+            onPress={() => setWardModalOpen(true)}
+            activeOpacity={0.85}
+          >
+            <AddSquare size={18} color={T.primary} variant="Bold" style={{ marginRight: 6 }} />
+            <Text style={styles.secondaryActionText}>Add Ward</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryActionBtn}
+            onPress={() => setPuModalOpen(true)}
+            activeOpacity={0.85}
+          >
+            <AddSquare size={18} color={T.primary} variant="Bold" style={{ marginRight: 6 }} />
+            <Text style={styles.secondaryActionText}>Add Polling Unit</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Recent Registrations Section */}
+        <View style={styles.panel}>
+          <View style={styles.panelHeader}>
+            <Text style={styles.panelTitle}>Recent Registrations</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('People')}>
+              <Text style={styles.viewAllText}>View all</Text>
+            </TouchableOpacity>
+          </View>
+
+          {recentPeople.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>No registrations yet.</Text>
+              <Text style={styles.emptySub}>Add members using "Register New Person" above.</Text>
+            </View>
+          ) : (
+            recentPeople.map((p) => (
+              <TouchableOpacity
+                key={p.id}
+                style={styles.recentItem}
+                onPress={() => navigation.navigate('PersonDetail', { personId: p.id })}
+                activeOpacity={0.7}
+              >
+                <View style={styles.recentAvatar}>
+                  <Text style={styles.recentAvatarText}>
+                    {p.full_name ? p.full_name.charAt(0).toUpperCase() : 'A'}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.recentName} numberOfLines={1}>{p.full_name}</Text>
+                  <Text style={styles.recentMeta} numberOfLines={1}>
+                    {p.ward_name || 'Ward'} • {p.polling_unit_name || 'PU'}
+                  </Text>
+                </View>
+                {p.synced === 0 ? (
+                  <View style={styles.localTag}>
+                    <Text style={styles.localTagText}>Offline</Text>
+                  </View>
+                ) : (
+                  <ArrowRight2 size={16} color={T.muted} />
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+
+        {/* Wards Summary Overview */}
+        <View style={styles.panel}>
+          <View style={styles.panelHeader}>
+            <Text style={styles.panelTitle}>Wards Overview</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Wards')}>
+              <Text style={styles.viewAllText}>Manage wards</Text>
+            </TouchableOpacity>
+          </View>
+
+          {wardSummaries.map((w) => (
+            <TouchableOpacity
+              key={w.id}
+              style={styles.wardRow}
+              onPress={() => navigation.navigate('PollingUnits')}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.wardRowName} numberOfLines={1}>{w.name}</Text>
+                <Text style={styles.wardRowCode}>{w.code || 'Ward'} • {w.polling_unit_count || 0} Polling Units</Text>
+              </View>
+              <View style={styles.wardCountBadge}>
+                <Text style={styles.wardCountText}>{w.people_count || 0} People</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
       </ScrollView>
+
+      <WardFormModal
+        visible={wardModalOpen}
+        onClose={() => setWardModalOpen(false)}
+        onSaved={loadAllData}
+      />
+
+      <PollingUnitFormModal
+        visible={puModalOpen}
+        onClose={() => setPuModalOpen(false)}
+        onSaved={loadAllData}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f5f7fa' },
+  safe: { flex: 1, backgroundColor: T.bg },
   container: { padding: 16, paddingBottom: 32 },
-  greeting: { marginBottom: 20 },
-  greetingText: { fontSize: 20, fontWeight: '700', color: '#1a3a6b' },
-  greetingSubtext: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  errorBanner: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ef4444',
+  topHeader: {
+    marginBottom: 14,
   },
-  errorText: { color: '#dc2626', fontSize: 13 },
-  statsRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
-  statCard: {
-    flex: 1,
-    borderRadius: 14,
-    padding: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  statCardBlue: { backgroundColor: '#1a3a6b' },
-  statCardGreen: { backgroundColor: '#059669' },
-  statCardAmber: { backgroundColor: '#d97706' },
-  statNumber: { fontSize: 32, fontWeight: '800', color: '#fff' },
-  statLabel: { fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 4, textAlign: 'center' },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 12 },
-  primaryButton: {
-    backgroundColor: '#1a3a6b',
-    borderRadius: 14,
-    padding: 18,
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: 10,
-    shadowColor: '#1a3a6b',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
   },
-  primaryButtonIcon: { color: '#fff', fontSize: 22, fontWeight: '300', marginRight: 8 },
-  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  secondaryButton: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 16,
+  brandBadge: {
+    backgroundColor: T.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  brandBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  appName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: T.text,
+  },
+  appSub: {
+    fontSize: 11,
+    color: T.muted,
+  },
+  greetingBox: {
+    marginTop: 4,
+  },
+  greetingTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: T.text,
+  },
+  greetingSub: {
+    fontSize: 13,
+    color: T.muted,
+    marginTop: 2,
+  },
+  searchPanel: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  secondaryButtonText: { color: '#374151', fontSize: 15, fontWeight: '600' },
-  syncButton: {
-    backgroundColor: '#059669',
-    borderRadius: 14,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  syncButtonDisabled: { backgroundColor: '#9ca3af' },
-  syncButtonIcon: { color: '#fff', fontSize: 20, marginRight: 8 },
-  syncButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  statusCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 16,
-    shadowColor: '#000',
+    borderColor: T.border,
+    marginBottom: 16,
+    shadowColor: '#172033',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 2,
   },
-  statusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
-  statusLabel: { fontSize: 14, color: '#6b7280' },
-  statusValue: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  badgeGreen: { backgroundColor: '#d1fae5' },
-  badgeRed: { backgroundColor: '#fee2e2' },
-  badgeText: { fontSize: 12, fontWeight: '600', color: '#111' },
-  divider: { height: 1, backgroundColor: '#f3f4f6' },
+  searchPlaceholder: {
+    fontSize: 14,
+    color: T.muted,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  statCard: {
+    width: '48.5%',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: T.border,
+    shadowColor: '#172033',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  statIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: T.text,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: T.muted,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: T.text,
+    marginBottom: 10,
+  },
+  primaryActionBtn: {
+    backgroundColor: T.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    shadowColor: T.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  primaryActionText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+  },
+  secondaryActionBtn: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: T.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryActionText: {
+    color: T.primary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  panel: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: T.border,
+    marginBottom: 16,
+    shadowColor: '#172033',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: T.bg,
+  },
+  panelTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: T.text,
+  },
+  viewAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: T.primary,
+  },
+  emptyBox: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: T.text,
+  },
+  emptySub: {
+    fontSize: 12,
+    color: T.muted,
+    marginTop: 2,
+  },
+  recentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: T.bg,
+  },
+  recentAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: T.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  recentAvatarText: {
+    color: T.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  recentName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.text,
+  },
+  recentMeta: {
+    fontSize: 12,
+    color: T.muted,
+    marginTop: 1,
+  },
+  localTag: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  localTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: T.warning,
+  },
+  wardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: T.bg,
+  },
+  wardRowName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: T.text,
+  },
+  wardRowCode: {
+    fontSize: 11,
+    color: T.muted,
+    marginTop: 1,
+  },
+  wardCountBadge: {
+    backgroundColor: T.bg,
+    borderWidth: 1,
+    borderColor: T.border,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  wardCountText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: T.text,
+  },
 });

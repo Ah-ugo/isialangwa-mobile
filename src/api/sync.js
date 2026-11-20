@@ -28,3 +28,21 @@ export async function uploadPerson(payload) {
   const response = await client.post('/people', payload);
   return response.data;
 }
+
+/**
+ * Push a ward record to the server.
+ * @param {object} payload - ward data { name, code, description }
+ */
+export async function uploadWard(payload) {
+  const response = await client.post('/wards', payload);
+  return response.data;
+}
+
+/**
+ * Push a polling unit record to the server.
+ * @param {object} payload - polling unit data { name, code, wardId, description }
+ */
+export async function uploadPollingUnit(payload) {
+  const response = await client.post('/polling-units', payload);
+  return response.data;
+}

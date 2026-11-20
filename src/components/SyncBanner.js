@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Wifi, RefreshCircle, Timer1 } from 'iconsax-react-native';
 import { useSync } from '../context/SyncContext';
+import { T } from '../theme/colors';
 
 export default function SyncBanner() {
   const { isOnline, isSyncing, pendingCount, syncNow } = useSync();
@@ -19,7 +21,7 @@ export default function SyncBanner() {
       <View style={styles.content}>
         {!isOnline ? (
           <>
-            <Text style={styles.icon}>📡</Text>
+            <Wifi size={16} color="#ffffff" variant="Bold" style={styles.icon} />
             <Text style={styles.text}>
               Offline mode — changes saved locally
               {pendingCount > 0 ? ` (${pendingCount} pending)` : ''}
@@ -27,14 +29,17 @@ export default function SyncBanner() {
           </>
         ) : isSyncing ? (
           <>
-            <ActivityIndicator size="small" color="#fff" style={styles.spinner} />
+            <ActivityIndicator size="small" color="#ffffff" style={styles.icon} />
             <Text style={styles.text}>Syncing with server...</Text>
           </>
         ) : (
           <>
-            <Text style={styles.icon}>⏳</Text>
-            <Text style={styles.text}>{pendingCount} record{pendingCount > 1 ? 's' : ''} pending upload</Text>
-            <TouchableOpacity onPress={syncNow} style={styles.syncBtn} activeOpacity={0.8}>
+            <Timer1 size={16} color="#ffffff" variant="Bold" style={styles.icon} />
+            <Text style={styles.text}>
+              {pendingCount} record{pendingCount > 1 ? 's' : ''} waiting to sync
+            </Text>
+            <TouchableOpacity onPress={syncNow} style={styles.syncBtn} activeOpacity={0.85}>
+              <RefreshCircle size={14} color={T.warning} variant="Bold" style={{ marginRight: 4 }} />
               <Text style={styles.syncBtnText}>Sync</Text>
             </TouchableOpacity>
           </>
@@ -46,18 +51,18 @@ export default function SyncBanner() {
 
 const styles = StyleSheet.create({
   banner: {
-    paddingVertical: 8,
+    paddingVertical: 7,
     paddingHorizontal: 16,
     width: '100%',
   },
   bannerOffline: {
-    backgroundColor: '#dc2626',
+    backgroundColor: T.danger,
   },
   bannerSyncing: {
-    backgroundColor: '#2563eb',
+    backgroundColor: T.brandBlue,
   },
   bannerPending: {
-    backgroundColor: '#d97706',
+    backgroundColor: T.warning,
   },
   content: {
     flexDirection: 'row',
@@ -66,14 +71,10 @@ const styles = StyleSheet.create({
   },
   icon: {
     marginRight: 8,
-    fontSize: 14,
-  },
-  spinner: {
-    marginRight: 8,
   },
   text: {
     color: '#ffffff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     flexShrink: 1,
   },
@@ -81,11 +82,13 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     backgroundColor: '#ffffff',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   syncBtnText: {
-    color: '#d97706',
+    color: T.warning,
     fontWeight: '700',
     fontSize: 12,
   },
