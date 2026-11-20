@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Isialangwa Directory",
+    "slug": "isialangwa-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a3a6b"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.isialangwa.directory"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a3a6b"
+      },
+      "package": "com.isialangwa.directory",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_NETWORK_STATE",
+        "INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Isialangwa Directory to access your photos.",
+          "cameraPermission": "Allow Isialangwa Directory to access your camera."
+        }
+      ]
+    ],
+    "scheme": "isialangwa",
+    "extra": {
+      "apiBaseUrl": "https://apcbe.vercel.app/api"
+    }
+  }
+}
